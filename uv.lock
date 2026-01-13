@@ -2550,6 +2550,7 @@ dependencies = [
     { name = "dotenv" },
     { name = "fastrtc" },
     { name = "openai" },
+    { name = "python-dotenv" },
     { name = "reachy-mini", extra = ["gstreamer"] },
     { name = "scipy" },
 ]
@@ -2559,6 +2560,7 @@ requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastrtc", specifier = ">=0.0.34" },
     { name = "openai", specifier = ">=2.15.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "reachy-mini", extras = ["gstreamer"], specifier = ">=1.2.8" },
     { name = "scipy", specifier = ">=1.16.3" },
 ]

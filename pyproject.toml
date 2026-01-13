@@ -8,6 +8,7 @@ dependencies = [
     "dotenv>=0.9.9",
     "fastrtc>=0.0.34",
     "openai>=2.15.0",
+    "python-dotenv>=1.2.1",
     "reachy-mini[gstreamer]>=1.2.8",
     "scipy>=1.16.3",
 ]
