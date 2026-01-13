@@ -1,16 +1,16 @@
-"""Minimal Reachy Mini conversation app using OpenAI Realtime API."""
+"""Salty meeting notes assistant."""
 
-import asyncio
 import logging
-import threading
+import os
 from datetime import datetime
 from pathlib import Path
 
-from reachy_mini import ReachyMini, ReachyMiniApp
+import requests
+from dotenv import load_dotenv
 
-from salty.realtime import RealtimeConfig, RealtimeHandler
-from salty.audio_bridge import ReachyAudioBridge
-from salty.movement_manager import MovementManager
+import salty
+
+load_dotenv()
 
 
 logging.basicConfig(
@@ -19,134 +19,60 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logging.getLogger("salty").setLevel(logging.DEBUG)
-logger = logging.getLogger("salty")
+
+def send_slack(text: str) -> dict:
+    """Send a message to Slack."""
+    slack_hook = os.getenv("SLACK_HOOK")
+
+    if not slack_hook:
+        return {"error": "SLACK_HOOK environment variable not set"}
+
+    try:
+        response = requests.post(
+            slack_hook,
+            json={"text": text},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return {"success": True, "message": f"Sent to Slack: {text}"}
+    except requests.RequestException as e:
+        return {"error": f"Failed to send to Slack: {str(e)}"}
 
 
-# ============================================================================
-# Define your tools here
-# ============================================================================
-
-def save_note(content: str) -> dict:
-    """Save a note to the meeting notes file."""
-    notes_file = Path("notes.txt")
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    with notes_file.open("a") as f:
-        f.write(f"[{timestamp}] {content}\n")
-
-    return {"success": True, "message": f"Saved note: {content}"}
-
-
-def get_notes() -> dict:
-    """Get all saved notes from the meeting."""
-    notes_file = Path("notes.txt")
-
-    if not notes_file.exists():
-        return {"notes": ""}
-
-    with notes_file.open("r") as f:
-        notes = f.read()
-
-    return {"notes": notes}
-
-
-# Tool specifications in OpenAI format
-TOOLS = [
-    {
-        "type": "function",
-        "name": "save_note",
-        "description": "Save a note to the meeting notes file",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "The note content to save"
-                }
-            },
-            "required": ["content"]
+send_slack_tool = salty.Tool(
+    name="send_slack",
+    description="Send a message to Slack",
+    function=send_slack,
+    parameters={
+        "text": {
+            "type": "string",
+            "description": "The message to send to Slack",
         }
     },
-    {
-        "type": "function",
-        "name": "get_notes",
-        "description": "Get all previously saved notes from the meeting",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    }
-]
-
-# Map tool names to functions
-TOOL_FUNCTIONS = {
-    "save_note": save_note,
-    "get_notes": get_notes,
-}
+    required=["text"],
+)
 
 
-# ============================================================================
-# App
-# ============================================================================
-
-class ReachyConversationApp(ReachyMiniApp):  # type: ignore[misc]
-    """Reachy Mini conversation app with OpenAI Realtime API."""
-
-    def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
-        """Run the conversation app."""
-        # Create new event loop to avoid nesting issues
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            loop.run_until_complete(self._async_run(reachy_mini, stop_event))
-        finally:
-            loop.close()
-
-    async def _async_run(self, robot: ReachyMini, stop_event: threading.Event) -> None:
-        """Main async loop."""
-        # Create movement manager
-        movement_mgr = MovementManager(robot)
-        movement_mgr.start()
-        movement_mgr.start_doa_monitoring()
-        logger.info("Movement manager started with DoA monitoring")
-
-        # Configure OpenAI with tools
-        config = RealtimeConfig(
-            instructions="""You are Salty, a friendly Reachy Mini robot assistant for meetings.
+# Build the app
+app = salty.build(
+    instructions="""You are Salty, a friendly Reachy Mini robot assistant for meetings.
 
 Your job is to help take notes during meetings. When someone says something important
-that should be written down, use the save_note tool to record it. You can also retrieve
-previously saved notes using the get_notes tool when asked.
+that should be written down, use the send_slack tool to record it whenever a point is
+made or whe the user asks you.
 
-Be proactive - if you hear action items, decisions, or important points, offer to save them.""",
-            voice="cedar",
-            tools=TOOLS,
-            tool_functions=TOOL_FUNCTIONS,
-        )
-
-        # Create handler
-        handler = RealtimeHandler(config)
-
-        # Create audio bridge
-        bridge = ReachyAudioBridge(robot, handler, movement_mgr)
-
-        # Start bridge
-        await bridge.start()
-
-        try:
-            # Wait for stop signal
-            while not stop_event.is_set():
-                await asyncio.sleep(0.1)
-        finally:
-            await bridge.stop()
-            movement_mgr.stop()
-            logger.info("Movement manager stopped")
+Be proactive - if you hear action items, decisions, or important points, offer to save them.
+Use the express_emotion tool to show engagement and emotion during conversations.
+Finally, mute and unmute yourself as needed. When the user says for you to stop talking
+mute yourself until the user calls you back.
+""",
+    voice="cedar",
+    api_key=None,
+    tools=[send_slack_tool],
+)
 
 
 if __name__ == "__main__":
-    app = ReachyConversationApp()
     try:
         app.wrapped_run()
     except KeyboardInterrupt:

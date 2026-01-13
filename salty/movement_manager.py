@@ -119,6 +119,97 @@ class TurnToUserMove(Move):  # type: ignore
         return (None, None, current_yaw)
 
 
+class EmotionMove(Move):  # type: ignore
+    """Express an emotion through body language."""
+
+    def __init__(self, emotion: str, duration: float = 2.0):
+        """Initialize emotion movement.
+
+        Args:
+            emotion: One of "happy", "excited", "curious", "thinking", "surprised", "sad"
+            duration: How long to hold the expression
+        """
+        self._duration = duration
+        self.emotion = emotion.lower()
+
+        # Define emotion parameters (head tilt, antenna positions)
+        emotions = {
+            "happy": {
+                "head": (0, 0, 0.01, 0, 0, 0),  # Slight head lift
+                "antennas": (np.deg2rad(25), np.deg2rad(25)),  # Both up
+            },
+            "excited": {
+                "head": (0, 0, 0.015, 0, np.deg2rad(-5), 0),  # Head up, tilted back
+                "antennas": (np.deg2rad(35), np.deg2rad(35)),  # Both way up
+            },
+            "curious": {
+                "head": (0, 0, 0.005, np.deg2rad(15), 0, 0),  # Head tilted to side
+                "antennas": (np.deg2rad(30), np.deg2rad(5)),  # One up, one neutral
+            },
+            "thinking": {
+                "head": (0, 0, -0.005, 0, np.deg2rad(10), 0),  # Head down, looking down
+                "antennas": (np.deg2rad(-10), np.deg2rad(20)),  # Asymmetric
+            },
+            "surprised": {
+                "head": (0, 0, 0.02, 0, np.deg2rad(-10), 0),  # Head back
+                "antennas": (np.deg2rad(40), np.deg2rad(40)),  # Both high
+            },
+            "sad": {
+                "head": (0, 0, -0.01, 0, np.deg2rad(15), 0),  # Head down
+                "antennas": (np.deg2rad(-15), np.deg2rad(-15)),  # Both drooped
+            },
+        }
+
+        config = emotions.get(self.emotion, emotions["happy"])
+        head_params = config["head"]
+        self.target_head = create_head_pose(
+            x=head_params[0],
+            y=head_params[1],
+            z=head_params[2],
+            roll=head_params[3],
+            pitch=head_params[4],
+            yaw=head_params[5],
+            degrees=False,
+            mm=False,
+        )
+        self.target_antennas = config["antennas"]
+
+        # Hold time at peak expression
+        self.hold_time = duration * 0.6
+        self.ease_in = duration * 0.2
+        self.ease_out = duration * 0.2
+
+    @property
+    def duration(self) -> float:
+        """Duration of the emotion."""
+        return self._duration
+
+    def evaluate(self, t: float) -> Tuple[NDArray[np.float64] | None, NDArray[np.float64] | None, float | None]:
+        """Evaluate emotion at time t."""
+        if t < self.ease_in:
+            # Easing in to expression
+            progress = t / self.ease_in
+            progress = progress * progress * (3 - 2 * progress)  # Smooth
+        elif t < self.ease_in + self.hold_time:
+            # Holding expression
+            progress = 1.0
+        else:
+            # Easing back to neutral
+            ease_t = (t - self.ease_in - self.hold_time) / self.ease_out
+            progress = 1.0 - (ease_t * ease_t * (3 - 2 * ease_t))
+
+        # Interpolate head
+        neutral_head = create_head_pose(0, 0, 0, 0, 0, 0, degrees=True)
+        head_pose = linear_pose_interpolation(neutral_head, self.target_head, progress)
+
+        # Interpolate antennas
+        antennas = np.array(
+            [self.target_antennas[0] * progress, self.target_antennas[1] * progress], dtype=np.float64
+        )
+
+        return (head_pose, antennas, 0.0)
+
+
 class BreathingMove(Move):  # type: ignore
     """Breathing move with interpolation to neutral and then continuous breathing patterns."""
 
@@ -147,8 +238,16 @@ class BreathingMove(Move):  # type: ignore
         # Breathing parameters
         self.breathing_z_amplitude = 0.005  # 5mm gentle breathing
         self.breathing_frequency = 0.1  # Hz (6 breaths per minute)
-        self.antenna_sway_amplitude = np.deg2rad(15)  # 15 degrees
-        self.antenna_frequency = 0.5  # Hz (faster antenna sway)
+
+        # Antenna movement parameters - slow, random movements
+        self.antenna_base_amplitude = np.deg2rad(8)  # 8 degrees base
+        self.antenna_frequency_left = 0.11 + np.random.uniform(-0.03, 0.03)  # ~9 sec period, randomized
+        self.antenna_frequency_right = 0.13 + np.random.uniform(-0.03, 0.03)  # ~7.7 sec period, randomized
+        self.antenna_phase_left = np.random.uniform(0, 2 * math.pi)  # Random starting phase
+        self.antenna_phase_right = np.random.uniform(0, 2 * math.pi)
+
+        # Additional slow modulation for variety
+        self.antenna_mod_freq = 0.04  # Very slow modulation (~25 sec)
 
     @property
     def duration(self) -> float:
@@ -180,9 +279,22 @@ class BreathingMove(Move):  # type: ignore
             z_offset = self.breathing_z_amplitude * np.sin(2 * np.pi * self.breathing_frequency * breathing_time)
             head_pose = create_head_pose(x=0, y=0, z=z_offset, roll=0, pitch=0, yaw=0, degrees=True, mm=False)
 
-            # Antenna sway (opposite directions)
-            antenna_sway = self.antenna_sway_amplitude * np.sin(2 * np.pi * self.antenna_frequency * breathing_time)
-            antennas = np.array([antenna_sway, -antenna_sway], dtype=np.float64)
+            # Slow, independent antenna movements with modulation for variety
+            modulation = 0.5 + 0.5 * np.sin(2 * np.pi * self.antenna_mod_freq * breathing_time)
+
+            left_antenna = (
+                self.antenna_base_amplitude
+                * modulation
+                * np.sin(2 * np.pi * self.antenna_frequency_left * breathing_time + self.antenna_phase_left)
+            )
+
+            right_antenna = (
+                self.antenna_base_amplitude
+                * modulation
+                * np.sin(2 * np.pi * self.antenna_frequency_right * breathing_time + self.antenna_phase_right)
+            )
+
+            antennas = np.array([left_antenna, right_antenna], dtype=np.float64)
 
         # Return in official Move interface format: (head_pose, antennas_array, body_yaw)
         return (head_pose, antennas, 0.0)
@@ -867,7 +979,6 @@ class MovementManager:
                 time.sleep(0.1)
 
             except Exception as e:
-                raise e
                 logger.error(f"Error in DoA monitoring: {e}")
                 time.sleep(0.5)  # Longer sleep on error
 

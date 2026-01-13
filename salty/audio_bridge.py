@@ -34,6 +34,7 @@ class ReachyAudioBridge:
         self._stop_event = asyncio.Event()
         self._playing = False  # Track if speaker is active
         self._assistant_speaking = False  # Track if assistant is speaking
+        self._muted = False  # Track if audio output is muted
 
     async def start(self) -> None:
         """Start the audio bridge and handler."""
@@ -55,6 +56,19 @@ class ReachyAudioBridge:
         # Start audio pump tasks
         asyncio.create_task(self._microphone_loop(), name="microphone-loop")
         asyncio.create_task(self._speaker_loop(), name="speaker-loop")
+
+    def set_muted(self, muted: bool) -> None:
+        """Set muted state for audio output.
+
+        Args:
+            muted: If True, audio output is silenced but LM continues running
+        """
+        self._muted = muted
+        if muted and self._playing:
+            logger.debug("Muting - stopping speaker")
+            self.robot.media.stop_playing()
+            self._playing = False
+        logger.info(f"Audio output {'muted' if muted else 'unmuted'}")
 
     def interrupt_playback(self) -> None:
         """Interrupt current playback (called when user starts speaking)."""
@@ -126,6 +140,13 @@ class ReachyAudioBridge:
                     if first_frame:
                         logger.info(f"First audio frame: rate={sample_rate}Hz, shape={audio_data.shape}, dtype={audio_data.dtype}, len={len(audio_data.flatten())}")
                         first_frame = False
+
+                    # If muted, consume audio but don't play it
+                    if self._muted:
+                        # Still track speaking state for consistency
+                        if not self._assistant_speaking and self.movement_mgr:
+                            self._assistant_speaking = True
+                        continue
 
                     # Reshape to 1D if needed
                     if audio_data.ndim == 2:
