@@ -46,7 +46,7 @@ class RealtimeConfig:
     """
 
     api_key: str | None = None
-    model: str = "gpt-4o-realtime-preview-2024-12-17"
+    model: str = "gpt-realtime"
     voice: str = "nova"
     instructions: str = "You are a helpful assistant."
     turn_detection_threshold: float = 0.5
