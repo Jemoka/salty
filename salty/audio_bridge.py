@@ -20,17 +20,20 @@ class ReachyAudioBridge:
     that expect the fastrtc interface.
     """
 
-    def __init__(self, robot: ReachyMini, handler):
+    def __init__(self, robot: ReachyMini, handler, movement_mgr=None):
         """Initialize the audio bridge.
 
         Args:
             robot: Initialized ReachyMini instance
             handler: AsyncStreamHandler instance (e.g., RealtimeHandler)
+            movement_mgr: Optional MovementManager instance
         """
         self.robot = robot
         self.handler = handler
+        self.movement_mgr = movement_mgr
         self._stop_event = asyncio.Event()
         self._playing = False  # Track if speaker is active
+        self._assistant_speaking = False  # Track if assistant is speaking
 
     async def start(self) -> None:
         """Start the audio bridge and handler."""
@@ -43,6 +46,11 @@ class ReachyAudioBridge:
 
         # Hook up interruption callback
         self.handler.on_interrupt = self.interrupt_playback
+
+        # Hook up listening state callbacks for movement manager
+        if self.movement_mgr:
+            self.handler.on_user_speaking_start = lambda: self.movement_mgr.set_listening(True)
+            self.handler.on_user_speaking_stop = lambda: self.movement_mgr.set_listening(False)
 
         # Start audio pump tasks
         asyncio.create_task(self._microphone_loop(), name="microphone-loop")
@@ -105,6 +113,7 @@ class ReachyAudioBridge:
         logger.info(f"Robot output sample rate: {robot_output_rate}Hz")
 
         first_frame = True
+        last_movement_update = 0.0
 
         try:
             while not self._stop_event.is_set():
@@ -139,10 +148,31 @@ class ReachyAudioBridge:
                         self._playing = True
                         logger.debug("Started speaker playback")
 
+                        # Notify movement manager
+                        if not self._assistant_speaking and self.movement_mgr:
+                            self._assistant_speaking = True
+                            self.movement_mgr.start_assistant_speaking()
+
                     # Play on robot
                     self.robot.media.push_audio_sample(audio_data)
+
+                    # Update speech movements periodically (every 100ms)
+                    if self.movement_mgr:
+                        current_time = asyncio.get_event_loop().time()
+                        if current_time - last_movement_update >= 0.1:
+                            self.movement_mgr.update_speaking_movements()
+                            last_movement_update = current_time
+
+                else:
+                    # No audio - assistant may have stopped speaking
+                    if self._assistant_speaking and self.movement_mgr:
+                        self._assistant_speaking = False
+                        self.movement_mgr.stop_assistant_speaking()
 
         except Exception as e:
             logger.error(f"Speaker loop error: {e}")
         finally:
+            # Clean up speaking state
+            if self._assistant_speaking and self.movement_mgr:
+                self.movement_mgr.stop_assistant_speaking()
             logger.debug("Speaker loop stopped")

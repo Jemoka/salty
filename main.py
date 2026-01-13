@@ -10,6 +10,7 @@ from reachy_mini import ReachyMini, ReachyMiniApp
 
 from salty.realtime import RealtimeConfig, RealtimeHandler
 from salty.audio_bridge import ReachyAudioBridge
+from salty.movement_manager import MovementManager
 
 
 logging.basicConfig(
@@ -18,6 +19,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logging.getLogger("salty").setLevel(logging.DEBUG)
+logger = logging.getLogger("salty")
 
 
 # ============================================================================
@@ -104,6 +106,12 @@ class ReachyConversationApp(ReachyMiniApp):  # type: ignore[misc]
 
     async def _async_run(self, robot: ReachyMini, stop_event: threading.Event) -> None:
         """Main async loop."""
+        # Create movement manager
+        movement_mgr = MovementManager(robot)
+        movement_mgr.start()
+        movement_mgr.start_doa_monitoring()
+        logger.info("Movement manager started with DoA monitoring")
+
         # Configure OpenAI with tools
         config = RealtimeConfig(
             instructions="""You are Salty, a friendly Reachy Mini robot assistant for meetings.
@@ -122,7 +130,7 @@ Be proactive - if you hear action items, decisions, or important points, offer t
         handler = RealtimeHandler(config)
 
         # Create audio bridge
-        bridge = ReachyAudioBridge(robot, handler)
+        bridge = ReachyAudioBridge(robot, handler, movement_mgr)
 
         # Start bridge
         await bridge.start()
@@ -133,6 +141,8 @@ Be proactive - if you hear action items, decisions, or important points, offer t
                 await asyncio.sleep(0.1)
         finally:
             await bridge.stop()
+            movement_mgr.stop()
+            logger.info("Movement manager stopped")
 
 
 if __name__ == "__main__":

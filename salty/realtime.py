@@ -101,6 +101,8 @@ class RealtimeHandler(AsyncStreamHandler):
         self.on_user_transcript: callable | None = None
         self.on_assistant_transcript: callable | None = None
         self.on_interrupt: callable | None = None
+        self.on_user_speaking_start: callable | None = None
+        self.on_user_speaking_stop: callable | None = None
 
         # Tool registry
         self.tools: Dict[str, Callable] = config.tool_functions
@@ -252,10 +254,14 @@ class RealtimeHandler(AsyncStreamHandler):
                     self._empty()
                     if self.on_interrupt:
                         self.on_interrupt()
+                    if self.on_user_speaking_start:
+                        self.on_user_speaking_start()
 
                 # User stopped speaking
                 if event.type == "input_audio_buffer.speech_stopped":
                     logger.debug("User stopped speaking")
+                    if self.on_user_speaking_stop:
+                        self.on_user_speaking_stop()
 
                 # User transcript (completed)
                 if event.type == "conversation.item.input_audio_transcription.completed":
